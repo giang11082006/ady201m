@@ -3,170 +3,105 @@ import requests
 import pandas as pd
 import os
 import time
-from tqdm import tqdm
+import random
 
-# ==========================================
-# 1. CẤU HÌNH API & TOP 20 THÀNH PHỐ TỐI ƯU
-# ==========================================
+# 1. Cấu hình Oxylabs API
 API_ENDPOINT = 'https://realtime.oxylabs.io/v1/queries'
-API_AUTH = ('leducanhtuan06_zq1gT', 'Tuanlddanh06+')
+API_AUTH = ('letuan272823_WwsaN', 'Letuan12345_')
 
-# Danh sách 20 thành phố lớn (Mục tiêu: ~16,000 listings)
-target_cities = [
-    "new-york-ny", "los-angeles-ca", "chicago-il", "houston-tx", "phoenix-az",
-    "philadelphia-pa", "san-antonio-tx", "san-diego-ca", "dallas-tx", "san-jose-ca",
-    "austin-tx", "jacksonville-fl", "san-francisco-ca", "seattle-wa", "denver-co",
-    "washington-dc", "boston-ma", "miami-fl", "atlanta-ga", "las-vegas-nv"
-]
+target_zipcodes = ["90210", "10001", "66101", "77001", "98101"]
+MAX_PAGES_PER_ZIP = 5 
 
-MAX_PAGES_PER_CITY = 20 
+all_listings = []
+seen_zpids = set() # THÊM MỚI: Dùng set để theo dõi ZPID đã cào siêu tốc độ
 
-# Thiết lập thư mục lưu trữ
-output_dir = os.path.expanduser("~/workspace/project_ml/")
-os.makedirs(output_dir, exist_ok=True)
+print("BẮT ĐẦU CHIẾN DỊCH QUÉT DỮ LIỆU TOÀN QUỐC THEO ZIP CODE...\n" + "="*60)
 
-CHECKPOINT_FILE = os.path.join(output_dir, "zillow_16k_auto_save.csv")
-FINAL_FILE = os.path.join(output_dir, "zillow_16k_dataset_full.csv")
-
-# ==========================================
-# PHASE 1: CÀO DIỆN RỘNG (GOM KHOẢNG 16.000 LINK)
-# ==========================================
-print("="*70)
-print(f"PHASE 1: QUÉT {len(target_cities)} THÀNH PHỐ ĐỂ LẤY DATA CƠ BẢN")
-print("="*70)
-
-all_basic_listings = []
-
-for city in target_cities:
-    print(f"\n[*] Đang quét: {city.upper()}")
-    for page in range(1, MAX_PAGES_PER_CITY + 1):
+# 3. Vòng lặp quét Zip Code
+for zipcode in target_zipcodes:
+    print(f"\n>>> ĐANG QUÉT ZIP CODE: {zipcode} <<<")
+    
+    for page in range(1, MAX_PAGES_PER_ZIP + 1):
         page_slug = f"{page}_p/" if page > 1 else ""
-        target_url = f"https://www.zillow.com/{city}/{page_slug}"
+        target_url = f"https://www.zillow.com/homes/{zipcode}_rb/{page_slug}"
+        
+        print(f"[*] Tiến trình: Trang {page}/{MAX_PAGES_PER_ZIP} - {target_url}")
         
         payload = {
             "source": "universal",
             "url": target_url,
             "user_agent_type": "desktop",
             "render": "html",
-            "browser_instructions": [{"type": "fetch_resource", "filter": "https://www.zillow.com/async-create-search-page-state"}]
+            "browser_instructions": [
+                {
+                    "type": "fetch_resource",
+                    "filter": "https://www.zillow.com/async-create-search-page-state"
+                }
+            ]
         }
         
         try:
             response = requests.post(API_ENDPOINT, json=payload, auth=API_AUTH)
-            if response.status_code == 200:
-                data = response.json()
-                zillow_json_str = data["results"][0]["content"]
-                zillow_data = json.loads(zillow_json_str)
-                
-                search_results = zillow_data.get("cat1", {}).get("searchResults", {})
-                raw_listings = search_results.get("listResults", []) or search_results.get("mapResults", [])
-                
-                if raw_listings:
-                    all_basic_listings.extend(raw_listings)
-                    print(f"  -> Trang {page}: Vớt được {len(raw_listings)} nhà. (Tổng: {len(all_basic_listings)})")
-                else:
-                    print(f"  -> Trang {page}: Hết dữ liệu. Chuyển thành phố!")
-                    break 
-        except Exception as e:
-            print(f"  -> [LỖI] Bỏ qua {city} trang {page}.")
+            response.raise_for_status()
             
-        time.sleep(1.0) 
-
-print(f"\n[HOÀN TẤT PHASE 1] Tổng cộng gom được: {len(all_basic_listings)} căn nhà.")
-
-if not all_basic_listings:
-    print("Không cào được dữ liệu nào. Dừng chương trình.")
-    exit()
-
-df_basic = pd.json_normalize(all_basic_listings)
-url_col = 'detailUrl' if 'detailUrl' in df_basic.columns else [c for c in df_basic.columns if 'detailUrl' in c][0]
-
-# ==========================================
-# PHASE 2: CÀO SÂU EXTRA FEATURES TỪNG CĂN NHÀ
-# ==========================================
-print("\n" + "="*70)
-print(f"PHASE 2: TRUY CẬP {len(df_basic)} LINK ĐỂ BÓC TÁCH NỘI THẤT")
-print("=> CẢNH BÁO: Tốn khoảng 4-5 tiếng. Hệ thống TỰ ĐỘNG LƯU mỗi 500 căn!")
-print("="*70)
-
-fully_merged_data = []
-
-for idx, row in tqdm(df_basic.iterrows(), total=len(df_basic), desc="Tiến trình cào Extra"):
-    house_dict = row.to_dict()
-    url = row[url_col]
-    
-    if isinstance(url, str) and url.startswith("/"):
-        url = "https://www.zillow.com" + url
-        
-    if isinstance(url, str) and url.startswith("http"):
-        payload_detail = {
-            "source": "universal",
-            "url": url,
-            "user_agent_type": "desktop",
-            "render": "html",
-            "browser_instructions": [{"type": "fetch_resource", "filter": "https://www.zillow.com/graphql/"}]
-        }
-        
-        try:
-            res = requests.post(API_ENDPOINT, json=payload_detail, auth=API_AUTH)
-            if res.status_code == 200:
-                html_content = res.json()["results"][0]["content"]
+            data = response.json()
+            zillow_json_str = data["results"][0]["content"]
+            zillow_data = json.loads(zillow_json_str)
+            
+            search_results = zillow_data.get("cat1", {}).get("searchResults", {})
+            raw_listings = search_results.get("listResults", [])
+            
+            if not raw_listings:
+                raw_listings = search_results.get("mapResults", [])
                 
-                if "id=\"__NEXT_DATA__\"" in html_content:
-                    start_str = 'id="__NEXT_DATA__" type="application/json">'
-                    end_idx = html_content.find('</script>', html_content.find(start_str))
-                    json_str = html_content[html_content.find(start_str) + len(start_str):end_idx]
+            # XỬ LÝ LỌC TRÙNG NGAY LẬP TỨC
+            if raw_listings:
+                new_houses_count = 0
+                for listing in raw_listings:
+                    zpid = listing.get("zpid")
                     
-                    full_json = json.loads(json_str)
-                    property_details = full_json.get("props", {}).get("pageProps", {}).get("componentProps", {}).get("gdpClientCache", {})
-                    
-                    if property_details:
-                        cache_key = list(property_details.keys())[0]
-                        reso = property_details[cache_key].get("property", {}).get("resoFacts", {})
-                        
-                        house_dict.update({
-                            "reso_heating": reso.get("heating"),
-                            "reso_cooling": reso.get("cooling"),
-                            "reso_appliances": reso.get("appliances"),
-                            "reso_construction_materials": reso.get("constructionMaterials"),
-                            "reso_roof": reso.get("roof"),
-                            "reso_foundation": reso.get("foundation"),
-                            "reso_interior_features": reso.get("interiorFeatures"),
-                            "reso_parking_features": reso.get("parkingFeatures"),
-                            "reso_stories": reso.get("stories"),
-                            "reso_architectural_style": reso.get("architecturalStyle")
-                        })
-        except Exception:
-            pass 
+                    # Nếu có ZPID và ZPID này CHƯA TỪNG xuất hiện
+                    if zpid and zpid not in seen_zpids:
+                        seen_zpids.add(zpid)
+                        all_listings.append(listing)
+                        new_houses_count += 1
+                
+                print(f"    -> Nhận {len(raw_listings)} nhà. Trong đó có {new_houses_count} nhà mới.")
+                
+                # Nếu trang này trả về toàn bộ là nhà đã cào (Zillow bị kẹt ở trang 1)
+                # -> NGẮT vòng lặp phân trang luôn để đỡ tốn tiền API
+                if new_houses_count == 0:
+                    print("    [!] Zillow trả về dữ liệu trùng lặp. Ngừng lật trang tại Zip code này!")
+                    break 
+            else:
+                print("    -> Khu vực này hết nhà. Chuyển sang Zip Code tiếp theo!")
+                break 
+                
+        except Exception as e:
+            print(f"    -> [LỖI] Zillow chặn hoặc mạng lag: {e}")
+            break # Lỗi nặng thì bỏ qua Zip code này luôn
+            
+        time.sleep(random.uniform(1.0, 3.0))
 
-    fully_merged_data.append(house_dict)
-    time.sleep(0.8) # Nghỉ một nhịp nhỏ để bảo vệ kết nối API
+print("\n" + "="*60)
+print(f"[HOÀN TẤT] Tổng cộng đã gom được thực tế: {len(all_listings)} căn nhà DUY NHẤT.")
+
+# 4. Lưu file (Không cần Pandas drop_duplicates nữa vì đã sạch 100% từ trên)
+if all_listings:
+    print("Đang xuất file CSV...")
+    df_final = pd.json_normalize(all_listings)
     
-    # ----------------------------------------------------
-    # CHỨC NĂNG AUTO-SAVE: BẢO VỆ DỮ LIỆU MỖI 500 CĂN
-    # ----------------------------------------------------
-    if (idx + 1) % 500 == 0:
-        pd.DataFrame(fully_merged_data).to_csv(CHECKPOINT_FILE, index=False, encoding="utf-8-sig")
-        print(f"  [AUTO-SAVE] Đã sao lưu an toàn {idx + 1} căn...")
-
-# ==========================================
-# 3. LƯU THÀNH QUẢ CUỐI CÙNG
-# ==========================================
-print("\n" + "="*70)
-print("ĐANG XUẤT FILE DATASET CUỐI CÙNG...")
-
-df_final = pd.DataFrame(fully_merged_data)
-
-try:
-    df_final.to_csv(FINAL_FILE, index=False, encoding="utf-8-sig")
-    print(f"\n[THÀNH CÔNG] Dataset ~16,000 dòng (Basic + Extra) đã hoàn tất tại:")
-    print(f"-> {FINAL_FILE}")
+    output_dir = os.path.expanduser("~/workspace/project_ml/")
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, "zillow_national_dataset.csv")
     
-    # Xóa file lưu tạm nếu script chạy mượt đến tận cùng
-    if os.path.exists(CHECKPOINT_FILE):
-        os.remove(CHECKPOINT_FILE)
-        
-except OSError:
-    fallback_path = "/tmp/zillow_16k_dataset_full.csv"
-    df_final.to_csv(fallback_path, index=False, encoding="utf-8-sig")
-    print(f"\n[THÀNH CÔNG] Đã lưu tại: {fallback_path}")
+    try:
+        df_final.to_csv(output_file, index=False, encoding="utf-8-sig")
+        print(f"\n[THÀNH CÔNG] Đã lưu {len(df_final)} dòng vào:")
+        print(f"-> {output_file}")
+    except OSError:
+        fallback = "/tmp/zillow_national_dataset.csv"
+        df_final.to_csv(fallback, index=False, encoding="utf-8-sig")
+        print(f"\n[THÀNH CÔNG] Đã lưu tạm thời tại: {fallback}")
+else:
+    print("\n[THẤT BẠI] Quá trình cào thất bại, không có dữ liệu.")
