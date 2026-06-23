@@ -2,8 +2,6 @@
 -- MỤC ĐÍCH: Tạo database riêng để lưu trữ dữ liệu Zillow
 -- HỆ QUẢN TRỊ: SQL Server
 -- ============================================================
-
--- Chuyển về database hệ thống master để có quyền tạo database mới
 USE master;
 GO
 
