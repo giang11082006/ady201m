@@ -1,7 +1,7 @@
 # Zillow Real Estate Price Analysis Database
 
-Tài liệu này mô tả thiết kế cơ sở dữ liệu cho dự án **Zillow Real Estate Price Analysis**.  
-Database được thiết kế trên **SQL Server** để lưu trữ và phân tích dữ liệu bất động sản từ file `zillow_final(4).csv`.
+Tài liệu này mô tả thiết kế cơ sở dữ liệu cho dự án **Zillow Real Estate Price Analysis in California**.  
+Database được thiết kế trên **SQL Server** để lưu trữ và phân tích dữ liệu bất động sản từ file `zillow_final.csv`.
 
 Dữ liệu ban đầu là một bảng phẳng dùng cho Machine Learning. Vì vậy, nhóm đã thiết kế lại thành cơ sở dữ liệu quan hệ để dữ liệu rõ ràng hơn, giảm trùng lặp và dễ truy vấn phân tích.
 
@@ -12,10 +12,10 @@ Dữ liệu ban đầu là một bảng phẳng dùng cho Machine Learning. Vì 
 ```text
 zillow_project/
 │
-├── 00_create_database.sql
-├── 01_zillow_schema.sql
-├── 02_zillow_seed_data.sql
-├── 03_zillow_queries.sql
+├── create_database.sql
+├── zillow_schema.sql
+├── zillow_seed_data.sql
+├── zillow_queries.sql
 └── README.md
 ```
 
@@ -23,10 +23,10 @@ zillow_project/
 
 | File | Chức năng |
 |---|---|
-| `00_create_database.sql` | Tạo database `ZillowRealEstateDB` |
-| `01_zillow_schema.sql` | Tạo bảng, khóa chính, khóa ngoại và index |
-| `02_zillow_seed_data.sql` | Insert dữ liệu vào database |
-| `03_zillow_queries.sql` | Tạo view và thực hiện các query phân tích |
+| `create_database.sql` | Tạo database `ZillowRealEstateDB` |
+| `zillow_schema.sql` | Tạo bảng, khóa chính, khóa ngoại và index |
+| `zillow_seed_data.sql` | Insert dữ liệu vào database |
+| `zillow_queries.sql` | Tạo view và thực hiện các query phân tích |
 | `README.md` | Giải thích thiết kế database |
 
 ---
@@ -263,163 +263,7 @@ Quan hệ giữa `properties` và `property_locations` là 1-1.
 
 ---
 
-## 5. Mối quan hệ giữa các bảng
-
-```text
-home_types 1 ---- n properties
-
-socioeconomic_profiles 1 ---- n properties
-
-risk_profiles 1 ---- n properties
-
-raw_zillow_listings 1 ---- 1 properties
-
-properties 1 ---- 1 property_locations
-```
-
-Giải thích:
-
-- Một loại nhà có thể có nhiều căn nhà.
-- Một hồ sơ kinh tế - xã hội có thể được nhiều căn nhà dùng chung.
-- Một hồ sơ rủi ro có thể được nhiều căn nhà dùng chung.
-- Một dòng dữ liệu gốc tạo ra một căn nhà trong bảng `properties`.
-- Một căn nhà có đúng một bộ thông tin vị trí.
-
----
-
-## 6. View dữ liệu sạch
-
-File `03_zillow_queries.sql` tạo view:
-
-```sql
-CREATE VIEW dbo.view_property_clean AS ...
-```
-
-View này join các bảng:
-
-```text
-properties
-home_types
-property_locations
-socioeconomic_profiles
-risk_profiles
-```
-
-Mục đích của view:
-
-- Gom dữ liệu đã chuẩn hóa lại thành một bảng ảo.
-- Giúp phân tích dễ hơn.
-- Không cần viết JOIN nhiều lần.
-
----
-
-## 7. Thứ tự chạy file SQL
-
-Chạy theo đúng thứ tự sau trong SQL Server Management Studio:
-
-### Bước 1: Tạo database
-
-```sql
-00_create_database.sql
-```
-
-File này tạo database:
-
-```text
-ZillowRealEstateDB
-```
-
-### Bước 2: Tạo schema
-
-```sql
-01_zillow_schema.sql
-```
-
-File này tạo các bảng, khóa chính, khóa ngoại và index.
-
-### Bước 3: Insert dữ liệu
-
-```sql
-02_zillow_seed_data.sql
-```
-
-File này insert dữ liệu vào các bảng.
-
-### Bước 4: Tạo view và chạy query
-
-```sql
-03_zillow_queries.sql
-```
-
-File này tạo `view_property_clean` và thực hiện các query phân tích.
-
----
-
-## 8. Kiểm tra số dòng sau khi insert
-
-Sau khi chạy xong, có thể kiểm tra bằng query:
-
-```sql
-SELECT 'raw_zillow_listings' AS table_name, COUNT(*) AS total_rows FROM dbo.raw_zillow_listings
-UNION ALL
-SELECT 'home_types' AS table_name, COUNT(*) AS total_rows FROM dbo.home_types
-UNION ALL
-SELECT 'socioeconomic_profiles' AS table_name, COUNT(*) AS total_rows FROM dbo.socioeconomic_profiles
-UNION ALL
-SELECT 'risk_profiles' AS table_name, COUNT(*) AS total_rows FROM dbo.risk_profiles
-UNION ALL
-SELECT 'properties' AS table_name, COUNT(*) AS total_rows FROM dbo.properties
-UNION ALL
-SELECT 'property_locations' AS table_name, COUNT(*) AS total_rows FROM dbo.property_locations;
-```
-
-Kết quả mong đợi:
-
-```text
-raw_zillow_listings        4468 rows
-home_types                 6 rows
-socioeconomic_profiles     714 rows
-risk_profiles              1007 rows
-properties                 4468 rows
-property_locations         4468 rows
-```
-
----
-
-## 9. 5 câu hỏi phân tích chính
-
-File `03_zillow_queries.sql` giải quyết 5 câu hỏi:
-
-### Câu hỏi 1: Loại nhà nào có giá trung bình cao nhất?
-
-Phân tích giá nhà trung bình theo từng loại nhà như condo, townhouse, single-family.
-
-### Câu hỏi 2: Dataset có nhiều nhà thuộc phân khúc giá nào?
-
-Chia giá nhà thành các nhóm:
-
-```text
-Low price
-Medium price
-High price
-Luxury price
-```
-
-### Câu hỏi 3: Khu vực thu nhập cao có giá nhà cao hơn không?
-
-So sánh giá nhà trung bình giữa các nhóm khu vực thu nhập thấp, trung bình và cao.
-
-### Câu hỏi 4: Rủi ro khu vực ảnh hưởng thế nào đến giá nhà?
-
-Phân tích giá nhà theo nhóm rủi ro tổng thể và các chỉ số cháy, động đất, nắng nóng.
-
-### Câu hỏi 5: Nhà gần thành phố có giá cao hơn không?
-
-Phân tích ảnh hưởng của khoảng cách tới thành phố lớn tới giá nhà.
-
----
-
-## 10. Câu giải thích ngắn khi thuyết trình
+## 5. Giải thích tổng quan
 
 Database được thiết kế bằng cách tách dữ liệu Zillow ban đầu thành nhiều bảng theo từng nhóm ý nghĩa.  
 Bảng `properties` là bảng trung tâm, liên kết với `home_types`, `socioeconomic_profiles`, `risk_profiles` và `property_locations` thông qua khóa ngoại.  
